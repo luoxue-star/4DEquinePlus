@@ -1,0 +1,139 @@
+from typing import Optional
+from tqdm import tqdm
+import hydra
+import pyrootutils
+from amr.utils.checkpointing import build_checkpoint_callbacks, fit_checkpoint_kwargs
+from amr.models.hrm import HRM
+from amr.models.hrm_mv import MVHRM
+from amr.datasets import AvatarDataModule
+
+
+root = pyrootutils.setup_root(
+    search_from=__file__,
+    indicator=[".git", "pyproject.toml"],
+    pythonpath=True,
+    dotenv=True,
+)
+
+import os
+import sys
+import pytorch_lightning as pl
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.plugins.environments import SLURMEnvironment
+from pytorch_lightning.callbacks import TQDMProgressBar
+from amr.utils.pylogger import get_pylogger
+from amr.utils.misc import task_wrapper, log_hyperparameters
+import signal
+import warnings
+import wandb
+signal.signal(signal.SIGUSR1, signal.SIG_DFL)
+warnings.filterwarnings("ignore")
+
+
+class MyTQDMProgressBar(TQDMProgressBar):
+
+    def __init__(self):
+        super(MyTQDMProgressBar, self).__init__()
+        
+    def init_train_tqdm(self):
+        bar = super().init_train_tqdm()
+        bar.ncols = 150
+        bar.dynamic_ncols=False
+        return bar
+
+    def init_validation_tqdm(self):
+        bar = tqdm(
+            desc=self.validation_description,
+            position=0,
+            disable=self.is_disabled,
+            leave=True,
+            file=sys.stdout,
+            dynamic_ncols= False,
+            ncols = 150,
+        )
+        return bar
+
+    def get_metrics(self, trainer, model):
+        items = super().get_metrics(trainer, model)
+        if 'v_num' in items:
+            items.pop('v_num')
+        return items
+
+
+@hydra.main(version_base="1.2", config_path=str(root / "amr/configs_hydra"), config_name="train.yaml")
+def main(cfg: DictConfig) -> Optional[float]:
+    datamodule = AvatarDataModule(cfg)
+    use_multiview = cfg.MODEL.BACKBONE.get("USE_MULTIVIEW", False)
+    model = MVHRM(cfg) if use_multiview else HRM(cfg)
+
+    wandb_mode = cfg.WANDB.get("MODE", os.environ.get("WANDB_MODE", "offline"))
+    if wandb_mode == "offline":
+        os.environ["WANDB_MODE"] = wandb_mode
+    else:
+        os.environ['WANDB_BASE_URL'] = "https://api.bandw.top"
+
+    # Setup wandb logger
+    wandb_logger_kwargs = dict(
+        name=cfg.WANDB.get("NAME", cfg.exp_name),
+        save_dir=cfg.paths.output_dir,
+        project=cfg.WANDB.get("PROJECT_NAME", "4DEquinePlusPlus"),
+        entity=cfg.get("ENTITY"),
+        log_model=False,
+        job_type="train",
+        config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
+    )
+
+    resume_id = cfg.WANDB.get("ID") or cfg.WANDB.get("RUN_ID")
+    resume_mode = cfg.WANDB.get("RESUME", "allow")
+    if resume_id:
+        wandb_logger_kwargs["id"] = resume_id
+        wandb_logger_kwargs["resume"] = resume_mode
+        os.environ.setdefault("WANDB_RUN_ID", resume_id)
+        os.environ.setdefault("WANDB_RESUME", resume_mode)
+
+    logger = WandbLogger(**wandb_logger_kwargs)
+    loggers = [logger]
+
+    lr_monitor = pl.callbacks.LearningRateMonitor(logging_interval='step')
+    callbacks = [
+        *build_checkpoint_callbacks(cfg),
+        lr_monitor,
+        MyTQDMProgressBar()
+    ]
+
+    log = get_pylogger(__name__)
+    log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
+    trainer: Trainer = hydra.utils.instantiate(
+        cfg.trainer,
+        callbacks=callbacks,
+        logger=loggers,
+        plugins=(SLURMEnvironment(requeue_signal=signal.SIGUSR2) if (cfg.get('launcher', None) is not None) else None),
+        sync_batchnorm=True,
+        use_distributed_sampler=True,
+    )
+
+    object_dict = {
+        "cfg": cfg,
+        "datamodule": datamodule,
+        "model": model,
+        "callbacks": callbacks,
+        "logger": logger,
+        "trainer": trainer,
+    }
+
+    if logger:
+        log.info("Logging hyperparameters!")
+        log_hyperparameters(object_dict)
+
+    # Train the model
+    trainer.fit(model, datamodule=datamodule, **fit_checkpoint_kwargs(cfg))
+    log.info("Fitting done")
+
+    # Finalize wandb run
+    wandb.finish()
+
+
+if __name__ == "__main__":
+    main()

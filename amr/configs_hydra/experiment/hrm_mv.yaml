@@ -1,0 +1,124 @@
+# @package _global_
+
+GENERAL:
+  TOTAL_STEPS: 3500
+  LOG_STEPS: 100
+  VAL_STEPS: 500
+  VAL_EPOCHS: 1
+  CHECKPOINT_EPOCHS: 1
+  CHECKPOINT_SAVE_TOP_K: 1
+  NUM_WORKERS: 4
+  PREFETCH_FACTOR: 4
+
+LOSS_WEIGHTS:
+  REG: 0.1
+  RGB: 1.0
+  SILHOUETTE: 0.5
+  LPIPS: 1.0
+
+TRAIN:
+  LR: 2e-4
+  WEIGHT_DECAY: 5e-4
+  GRAD_CLIP_VAL: 0.1
+  WARMUP_STEPS: 3000
+  INITIAL_LR: 1e-10
+  BATCH_SIZE: 4
+  NUM_VIEW: 4
+
+MODEL:
+  BACKBONE:
+    MODEL_WEIGHT: data/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth
+    TYPE: dinov3_fusion
+    MODEL_NAME: dinov3_vitl16
+    ENCODER_FEAT_DIM: 1024
+    FREEZE: True
+    USE_MULTIVIEW: True
+    ALT_START: 8
+    CAT_TOKEN: True
+    RETURN_CLS_TOKEN: True
+  POINT_EMBEDDING:
+    DIM: 1024
+  FILTER_BG_TOKENS: True
+  DECODER:
+    BLOCK_TYPE: qwen_mm_cond
+    NUM_LAYERS: 5
+    NUM_HEADS: 16
+    INNER_DIM: 1024
+    COND_DIM: 1024
+    MOD_DIM: 1024
+    GRADIENT_CHECKPOINTING: True
+    INTER_FRAME_ATTN: True
+    EPS: 1e-6
+  RENDERER:
+    DROPOUT_FACTOR: 0.0
+    SIGMA_NOISE: 0.0
+    VAREN_MODEL_PATH: data/varen
+    SUBDIVIDE_NUM: 1
+    SMPL_TYPE: smplx
+    FEAT_DIM: 1024
+    QUERY_DIM: 1024
+    USE_RGB: True
+    SH_DEGREE: 3
+    XYZ_OFFSET_MAX_STEP: 1.0
+    MLP_NETWORK_CONFIG:
+      activation: silu
+      n_hidden_layers: 2
+      n_neurons: 512
+    EXPR_PARAM_DIM: 100
+    SHAPE_PARAM_DIM: 10
+    CLIP_SCALING: [100, 0.01, 0.2, 3000]
+    CANO_POSE_TYPE: 1
+    DECODER_MLP: False
+    SKIP_DECODER: True
+    FIX_OPACITY: False
+    FIX_ROTATION: False
+    GRADIENT_CHECKPOINTING: True
+    APPLY_POSE_BLENDSHAPE: False
+
+EXTRA:
+  NUM_LOG_IMAGES: 4
+
+WANDB:
+  PROJECT_NAME: 4DEquinePlus
+  MODE: offline
+  ID: null
+
+DATASETS:
+  VarenAvatar:
+    ROOT: /path/to/dataset/VarenTex
+    SHARD_INDEX: /path/to/dataset/avatar_shards/VarenTex/index.jsonl
+    IS_VAL: False
+    WEIGHT: 0.2
+  VarenWan:
+    ROOT: /path/to/dataset/VarenWanv2/wan_outputs
+    SHARD_INDEX: /path/to/dataset/avatar_shards/VarenWan/index.jsonl
+    IS_VAL: False
+    WEIGHT: 1.0
+  VarenWanEval:
+    ROOT: /path/to/dataset/Animal4DEval
+    IS_VAL: True
+  SAMPLE_SIDE_VIEWS: 4
+  RENDER_IMAGE_RES_LOW: 448
+  RENDER_IMAGE_RES_HIGH: 448
+  RENDER_REGION_SIZE: 448
+  SOURCE_IMAGE_RES: 448
+  SOURCE_CROP_PROB: 0.1
+  SOURCE_CROP_RATIO_RANGE: [0.5, 0.85]
+  SOURCE_MASK_PROB: 0.3
+  SOURCE_MASK_PATTERN: /path/to/dataset/VarenPoserMask/mask_{00000000..00000022}.tar
+  SOURCE_MASK_COVERAGE_RANGE: [0.4, 1.0]
+  # Multi-source input: randomly sample N source views each iteration.
+  # N is drawn uniformly from NUM_SOURCE_VIEWS_CHOICES, then clamped to the
+  # actual number of available views in the sequence.
+  NUM_SOURCE_VIEWS_CHOICES: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+  # All source tensors are zero-padded to MAX_SOURCE_VIEWS so batches are
+  # collatable. source_valid_mask (bool, shape [MAX_SOURCE_VIEWS]) marks real slots.
+  MAX_SOURCE_VIEWS: 16
+
+trainer:
+  # Default values for direct Hydra runs. training_scripts/equinegs_mv.sh
+  # overrides these from the requested GPU count and keeps the effective batch
+  # close to the 8-GPU baseline.
+  devices: 8
+  num_nodes: 1
+  accumulate_grad_batches: 1
