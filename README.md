@@ -53,6 +53,11 @@ bash training_scripts/animoformer.sh
 ```
 
 ### Train EquineGS
+Download the EquineGS training datasets:
+
+- **VarenTex**: [Google Drive](https://drive.google.com/drive/folders/1YDtNaKmueDoyP-NgySrp-BtJR0Pv9ftk?usp=sharing).
+- **VarenWan**: [Hugging Face](https://huggingface.co/datasets/luoxue-star/VarenWan).
+
 ```bash
 bash training_scripts/equinegs_mv.sh
 ```
